@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, List, Set
 import frida
 from uuid import uuid4
 from time import sleep
@@ -15,17 +15,30 @@ script = sess.create_script(get_frida_script())
 
 UUID_SAVE = {}
 
+from pprint import pprint
+
+COV_ADDR:Set[int] = set()
+cov_idx = 0
+
 def msg_callback(message:Dict[str, Dict[str, Dict[str, str]]], data):
-    print("recv: ", message)
+    #print(f'recv action {message["payload"]["action"]}')
+    #pprint(message)
     if message["payload"]["action"] == "create_global":
         for k, v in message["payload"]["val"].items():
             global_name = k
-            global_val = v
-            globals()[global_name] = int(global_val, 16) # created globals shall all be ptrs? TBD
+            global_val = eval(v)
+            globals()[global_name] = global_val
     elif message["payload"]["action"] == "uuid":
         uuid, it =list(message["payload"]["val"].items())[0]
         global UUID_SAVE
         UUID_SAVE.update({uuid:it})
+    elif message["payload"]["action"] == "cov":
+        global COV_ADDR
+        global cov_idx
+        cov_idx += 1
+        COV_ADDR.add(message["payload"]["val"])
+        #if cov_idx % 20 == 0:
+        #    print(len(COV_ADDR))
 
 def wait_for_uuid(uuid:str):
     global UUID_SAVE
@@ -68,6 +81,33 @@ def press_btn_instance(ptr:int):
         }
     }})
     
+def list_asm_methods():
+    script.post({'type': 'input', 'payload': {
+        "action":"listAsmMethods",
+        "param":{}
+    }})
+
+def wait_for_global_creation(global_name:str):
+    while global_name not in globals():
+        sleep(0.1)
+
+def create_cov_callback(ptr:int):
+    post_uuid = str(uuid4())
+    script.post({'type': 'input', 'payload': {
+        "action":"createCb",
+        "param":{
+            "addr": ptr,
+            "loc": "",
+            "uuid":post_uuid
+        }
+    }})
+    wait_for_uuid(post_uuid)
+
+def ck_contains_prefix(s:str, pre:List[str])->bool:
+    for p in pre:
+        if s.startswith(p):
+            return True
+    return False
 
 btns = [
     "BattleButton",
@@ -78,7 +118,45 @@ btns = [
 
 script.on('message', msg_callback)
 script.load()
+sleep(1) # 讓子彈飛一會兒
+list_asm_methods()
+
+#press_btn_instance(btn_mappings["WorkshopButton"])
+wait_for_global_creation("ASM_METHODS")
+#with open("yourlogfile.log", "w") as log_file:
+#    pprint(ASM_METHODS, log_file)
+IGNORE_PREFIX_LIST = [
+    "LitJson",
+    "I2",
+    "IronSourceJSON",
+    "TapjoyUnity",
+    "UnityEngine",
+    "GooglePlayGames",
+    "AppsFlyerSDK",
+    "AFMiniJSON"
+]
+
+all_methods = 0
+for k, v in ASM_METHODS.items():
+    if int(v, 16) == 0:
+        continue
+    if ck_contains_prefix(k, IGNORE_PREFIX_LIST):
+        continue
+    print(f"hook {k}")
+    create_cov_callback(v)
+    all_methods += 1
+print("all_methods cnt: ", all_methods)
 btn_mappings = { i:query_btn_instance(i) for i in btns }
-press_btn_instance(btn_mappings["WorkshopButton"])
+print("[start pressing after 3 sec...]")
+sleep(3)
+for k, v in btn_mappings.items():
+    print(f"[press {k}]")
+    press_btn_instance(v)
+    sleep(1)
+sleep(10) # 讓子彈飛一會兒
+print(f"=====================================")
+print(f"total coverage: {len(COV_ADDR)} / {all_methods} ({len(COV_ADDR) / all_methods})")
+print(f"=====================================")
+
 input("[]")
 sess.detach()

@@ -41,6 +41,34 @@ function GetBtnFromName(name: string) {
     //LOGD(`[*] btn handle: ${btn}`)
     return btn
 }
+function ListAllAssemblyMethods() {
+    let image = Il2Cpp.Domain.assembly("Assembly-CSharp").image
+    let res = new Map<string, NativePointer>();
+    // namespace as key:string ， classes as value:Array<class>
+    let tMap = new Map<string, Array<Il2Cpp.Class>>()
+    for (let i = 0; i < image.classes.length; i++) {
+        let key = "[*] " + image.classes[i].namespace
+        if (tMap.get(key) == undefined) tMap.set(key, new Array<Il2Cpp.Class>())
+        tMap.get(key)?.push(image.classes[i])
+    }
+
+
+    for (let key of tMap.keys()) {
+        let nameSpace: string = key
+        if (nameSpace != undefined) {
+            let nameSpaces: Array<Il2Cpp.Class> = tMap.get(nameSpace)!
+            //LOGD(`\n${nameSpace}`)
+            nameSpaces?.forEach((klass: Il2Cpp.Class) => {
+                klass.methods.forEach((method: Il2Cpp.Method) => {
+                    res.set(nameSpace.replace("[*] ", "") + "::" + klass.name + "::" + method.name, method.virtualAddress)
+                })
+                //LOGD(`\t[-] ${klass.handle} (F:${klass.fields.length}/M:${klass.methods.length}/E:${Number(klass.isEnum)})\t${klass.name}`)
+            })
+        }
+    }
+    return res
+}
+
 function PressBtn(mPtr: NativePointer) {
     let btn = new Il2Cpp.Button(mPtr)
     btn.Press()
@@ -63,6 +91,7 @@ type SearchFuncAction = {
 type CreateCbAction = {
     addr: number;
     loc: string;
+    uuid:string; // for ack
 }
 type FindBtnAction = {
     name: string;
@@ -75,7 +104,8 @@ enum PyActionType {
     searchFunc = "searchFunc",
     createCb = "createCb",
     findBtn = "findBtn",
-    pressBtn = "pressBtn"
+    pressBtn = "pressBtn",
+    listAsmMethods = "listAsmMethods"
 }
 type PyAction = {
     action: PyActionType;
@@ -102,9 +132,9 @@ const TODO_OTHERS = () => {
 
     function TODO() {
         while (true) {
-            LOG("[waiting for input]")
+            //LOG("[waiting for input]")
             const op = recv("input", (message, data) => {
-                LOG("[retrieve input]")
+                //LOG("[retrieve input]")
                 let value = message.payload as PyAction
                 switch (value.action) {
                     case PyActionType.searchFunc:
@@ -130,6 +160,26 @@ const TODO_OTHERS = () => {
                         {
                             let param = value.param as PressBtnAction
                             PressBtn(ptr(param.addr))
+                            break
+                        }
+                    case PyActionType.listAsmMethods:
+                        {
+                            let methods = JSON.stringify(Object.fromEntries(ListAllAssemblyMethods()))
+                            RetGlobal("ASM_METHODS", methods)
+                            break
+                        }
+                    case PyActionType.createCb:
+                        {
+                            // note: currently only report coverage onEnter
+                            let param = value.param as CreateCbAction
+                            LOGD(`[*] create callback at ${param.addr}`)
+                            attachNative(ptr(param.addr), () => {
+                                send({
+                                    "action": "cov",
+                                    "val": param.addr
+                                })
+                            })
+                            RetUUIDObject(param.uuid, 0)
                             break
                         }
                     default:
