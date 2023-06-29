@@ -144,6 +144,7 @@ export const OnButtonClick = (mPtr: NativePointer = ptr(0)) => {
     }
 
     function innerFunction(buttonInstance: NativePointer, eventData: NativePointer) {
+        LOGD(`\n[*] buttonInstance: ${buttonInstance}`)
         let button: Button = new Button(buttonInstance)
         let pointerEventData: PointerEventData = new PointerEventData(eventData)
         let currentGameobj: GameObject = button.gameobject

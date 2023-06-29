@@ -1,7 +1,50 @@
+import { PackArray } from "./bridge/fix/packer/packArray"
 import "./include"
+import { attachNative } from "./utils/common"
 
 setImmediate(() => main())
 
+function GetBtnComponent(gameObject: Il2Cpp.GameObject) {
+    if (gameObject.get_activeSelf()) {
+        let scripts: PackArray | undefined = listScripts(gameObject)
+        if (!scripts?.handle.isNull() && scripts != undefined && scripts.length > 0) {
+            for (let i = 0; i != scripts.get_Count(); ++i)
+            {
+                let script = scripts.get_Item(i)
+                if (script.class.name == "Button") {
+                    //LOGD(`[*] find btn: ${script.handle}`)
+                    return script.handle
+                }
+            }
+        }
+        throw new Error(`can not find btn in go ${gameObject.get_name()}`)
+    }
+    else {
+        LOGD(`[*] go not active`)
+        return ptr(0)
+    }
+}
+function SetActiveCb(mPtr: NativePointer) {
+    LOGD(`[trying ${mPtr}]`)
+    let gameObject = new Il2Cpp.GameObject(ptr(mPtr as unknown as number))
+    GetBtnComponent(gameObject)
+    //gameObject.GetComponent()
+}
+
+function GetBtnFromName(name: string) {
+    let go = Il2Cpp.GameObject.Find(name)
+    //LOGD(`[*] go ${go.get_name()} handle: ${go.handle}`)
+    if (go.handle.isNull())
+        throw new Error(`can not find GameObject of name ${name}`)
+    let btn = GetBtnComponent(go)
+    //showComponents(go)
+    //LOGD(`[*] btn handle: ${btn}`)
+    return btn
+}
+function PressBtn(mPtr: NativePointer) {
+    let btn = new Il2Cpp.Button(mPtr)
+    btn.Press()
+}
 const main = () => {
     fixMoreVerison() // issue # 22
     // pause()
@@ -18,54 +61,80 @@ type SearchFuncAction = {
     uuid?: string
 }
 type CreateCbAction = {
-    addr:number;
-    loc:string;
+    addr: number;
+    loc: string;
+}
+type FindBtnAction = {
+    name: string;
+    uuid: string
+}
+type PressBtnAction = {
+    addr: number;
 }
 enum PyActionType {
     searchFunc = "searchFunc",
-    createCb = "createCb"
+    createCb = "createCb",
+    findBtn = "findBtn",
+    pressBtn = "pressBtn"
 }
 type PyAction = {
-    action:PyActionType;
-    param:SearchFuncAction|CreateCbAction;
+    action: PyActionType;
+    param: SearchFuncAction | CreateCbAction | FindBtnAction | PressBtnAction;
 }
 
+function RetUUIDObject(uuid: string, obj: any) {
+    send({
+        "action": "uuid",
+        "val": {
+            [uuid]: obj.toString()
+        }
+    })
+}
+function RetGlobal(gname: string, obj: any) {
+    send({
+        "action": "create_global",
+        "val": {
+            [gname]: obj.toString()
+        }
+    })
+}
 const TODO_OTHERS = () => {
 
     function TODO() {
-        while(true)
-        {
+        while (true) {
             LOG("[waiting for input]")
             const op = recv("input", (message, data) => {
                 LOG("[retrieve input]")
                 let value = message.payload as PyAction
                 switch (value.action) {
                     case PyActionType.searchFunc:
-                        let param = value.param as SearchFuncAction;
-                        let res = find_method(param.imageName, param.className, param.functionName, param.argsCount)
-                        LOG(`search func ${param.className}::${param.functionName} res: ${res}`)
-                        if (param?.uuid !== undefined) {
-                            let k = param.uuid;
-                            send({
-                                "action":"uuid",
-                                "val":{
-                                    [k]:res.toString()
-                                }
-                            })
+                        {
+                            let param = value.param as SearchFuncAction
+                            let res = find_method(param.imageName, param.className, param.functionName, param.argsCount)
+                            LOG(`search func ${param.className}::${param.functionName} res: ${res}`)
+                            if (param?.uuid !== undefined) {
+                                RetUUIDObject(param.uuid, res)
+                            }
+                            else {
+                                RetGlobal(param.className + "_" + param.functionName + "_fptr", res)
+                            }
+                            break
                         }
-                        else {
-                            send({
-                                "action":"create_global",
-                                "val":{
-                                    "PlayerData_ctor_addr":res.toString()
-                                }
-                            })
+                    case PyActionType.findBtn:
+                        {
+                            let param = value.param as FindBtnAction
+                            RetUUIDObject(param.uuid, GetBtnFromName(param.name))
+                            break
                         }
-                        break;
-                    
+                    case PyActionType.pressBtn:
+                        {
+                            let param = value.param as PressBtnAction
+                            PressBtn(ptr(param.addr))
+                            break
+                        }
                     default:
                         LOG(`[reach default case with unknown action ${value.action}]`)
-                        break;
+                        break
                 }
             });
             op.wait();
